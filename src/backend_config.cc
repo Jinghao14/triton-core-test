@@ -39,7 +39,7 @@ GetTFSpecializedBackendName(
     const triton::common::BackendCmdlineConfigMap& config_map,
     std::string* specialized_name)
 {
-  std::string tf_version_str = "2";
+  std::string tf_version_str = "1";
   const auto& itr = config_map.find("tensorflow");
   if (itr != config_map.end()) {
     if (BackendConfiguration(itr->second, "version", &tf_version_str).IsOk()) {
@@ -53,6 +53,22 @@ GetTFSpecializedBackendName(
   }
 
   *specialized_name += tf_version_str;
+
+  return Status::Success;
+}
+
+Status
+GetOVSpecializedBackendName(
+    const triton::common::BackendCmdlineConfigMap& config_map,
+    std::string* specialized_name)
+{
+  std::string ov_version_str = "2021_4";
+  const auto& itr = config_map.find("openvino");
+  if (itr != config_map.end()) {
+    BackendConfiguration(itr->second, "version", &ov_version_str);
+  }
+
+  *specialized_name += ("_" + ov_version_str);
 
   return Status::Success;
 }
@@ -178,6 +194,8 @@ BackendConfigurationSpecializeBackendName(
   *specialized_name = backend_name;
   if (backend_name == "tensorflow") {
     RETURN_IF_ERROR(GetTFSpecializedBackendName(config_map, specialized_name));
+  } else if (backend_name == "openvino") {
+    RETURN_IF_ERROR(GetOVSpecializedBackendName(config_map, specialized_name));
   }
 
   return Status::Success;
@@ -192,32 +210,6 @@ BackendConfigurationBackendLibraryName(
 #else
   *libname = "libtriton_" + backend_name + ".so";
 #endif
-
-  return Status::Success;
-}
-
-Status
-BackendConfigurationModelLoadGpuFraction(
-    const triton::common::BackendCmdlineConfigMap& config_map,
-    const int device_id, double* memory_limit)
-{
-  *memory_limit = 1.0;
-  const auto& itr = config_map.find(std::string());
-  if (itr == config_map.end()) {
-    return Status(
-        Status::Code::INTERNAL,
-        "unable to find global backends directory configuration");
-  }
-
-  static std::string key_prefix = "model-load-gpu-limit-device-";
-  std::string memory_limit_str;
-  auto status = BackendConfiguration(
-      itr->second, key_prefix + std::to_string(device_id), &memory_limit_str);
-  // Allow missing key, default to 1.0 (no limit) if the limit is not specified
-  if (status.IsOk()) {
-    RETURN_IF_ERROR(BackendConfigurationParseStringToDouble(
-        memory_limit_str, memory_limit));
-  }
 
   return Status::Success;
 }

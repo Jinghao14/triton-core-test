@@ -87,14 +87,7 @@ Status
 RequestResponseCache::Create(
     uint64_t cache_size, std::unique_ptr<RequestResponseCache>* cache)
 {
-  try {
-    cache->reset(new RequestResponseCache(cache_size));
-  }
-  catch (const std::exception& ex) {
-    return Status(
-        Status::Code::INTERNAL,
-        "Failed to initialize Response Cache: " + std::string(ex.what()));
-  }
+  cache->reset(new RequestResponseCache(cache_size));
 
   return Status::Success;
 }

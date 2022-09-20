@@ -34,7 +34,6 @@
 
 #include "backend_model_instance.h"
 #include "infer_request.h"
-#include "scheduler_utils.h"
 #include "status.h"
 
 namespace triton { namespace core {
@@ -53,7 +52,7 @@ class Payload {
 
   Payload();
   void Reset(const Operation op_type, TritonModelInstance* instance = nullptr);
-  const Status& MergePayload(std::shared_ptr<Payload>& payload);
+  Status MergePayload(std::shared_ptr<Payload>& payload);
   Operation GetOpType() { return op_type_; }
   std::mutex* GetExecMutex() { return exec_mu_.get(); }
   size_t RequestCount() { return requests_.size(); }
@@ -73,10 +72,7 @@ class Payload {
   TritonModelInstance* GetInstance() { return instance_; }
   void MarkSaturated();
   bool IsSaturated() { return saturated_; }
-  RequiredEqualInputs* MutableRequiredEqualInputs()
-  {
-    return &required_equal_inputs_;
-  }
+
 
   State GetState() { return state_; }
   void SetState(State state);
@@ -94,7 +90,6 @@ class Payload {
   std::unique_ptr<std::promise<Status>> status_;
   std::unique_ptr<std::mutex> exec_mu_;
   uint64_t batcher_start_ns_;
-  RequiredEqualInputs required_equal_inputs_;
 
   bool saturated_;
 };

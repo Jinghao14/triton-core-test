@@ -278,9 +278,6 @@ class TritonServerOptions {
   bool GpuMetrics() const { return gpu_metrics_; }
   void SetGpuMetrics(bool b) { gpu_metrics_ = b; }
 
-  bool CpuMetrics() const { return cpu_metrics_; }
-  void SetCpuMetrics(bool b) { cpu_metrics_ = b; }
-
   uint64_t MetricsInterval() const { return metrics_interval_; }
   void SetMetricsInterval(uint64_t m) { metrics_interval_ = m; }
 
@@ -323,7 +320,6 @@ class TritonServerOptions {
   tc::RateLimiter::ResourceMap rate_limit_resource_map_;
   bool metrics_;
   bool gpu_metrics_;
-  bool cpu_metrics_;
   uint64_t metrics_interval_;
   unsigned int exit_timeout_;
   uint64_t pinned_memory_pool_size_;
@@ -343,9 +339,9 @@ TritonServerOptions::TritonServerOptions()
       model_control_mode_(tc::ModelControlMode::MODE_POLL),
       exit_on_error_(true), strict_model_config_(true), strict_readiness_(true),
       rate_limit_mode_(tc::RateLimitMode::RL_OFF), metrics_(true),
-      gpu_metrics_(true), cpu_metrics_(true), metrics_interval_(2000),
-      exit_timeout_(30), pinned_memory_pool_size_(1 << 28),
-      response_cache_byte_size_(0), buffer_manager_thread_count_(0),
+      gpu_metrics_(true), metrics_interval_(2000), exit_timeout_(30),
+      pinned_memory_pool_size_(1 << 28), response_cache_byte_size_(0),
+      buffer_manager_thread_count_(0),
       model_load_thread_count_(
           std::max(2u, 2 * std::thread::hardware_concurrency())),
 #ifdef TRITON_ENABLE_GPU
@@ -359,16 +355,11 @@ TritonServerOptions::TritonServerOptions()
 #ifndef TRITON_ENABLE_METRICS
   metrics_ = false;
   gpu_metrics_ = false;
-  cpu_metrics_ = false;
 #endif  // TRITON_ENABLE_METRICS
 
 #ifndef TRITON_ENABLE_METRICS_GPU
   gpu_metrics_ = false;
 #endif  // TRITON_ENABLE_METRICS_GPU
-
-#ifndef TRITON_ENABLE_METRICS_CPU
-  cpu_metrics_ = false;
-#endif  // TRITON_ENABLE_METRICS_CPU
 }
 
 TRITONSERVER_Error*
@@ -1225,26 +1216,6 @@ TRITONSERVER_ServerOptionsSetModelLoadThreadCount(
 }
 
 TRITONAPI_DECLSPEC TRITONSERVER_Error*
-TRITONSERVER_ServerOptionsSetLogFile(
-    TRITONSERVER_ServerOptions* options, const char* file)
-{
-#ifdef TRITON_ENABLE_LOGGING
-  std::string out_file;
-  if (file != nullptr) {
-    out_file = std::string(file);
-  }
-  const std::string& error = LOG_SET_OUT_FILE(out_file);
-  if (!error.empty()) {
-    return TRITONSERVER_ErrorNew(TRITONSERVER_ERROR_INTERNAL, (error).c_str());
-  }
-  return nullptr;  // Success
-#else
-  return TRITONSERVER_ErrorNew(
-      TRITONSERVER_ERROR_UNSUPPORTED, "logging not supported");
-#endif  // TRITON_ENABLE_LOGGING
-}
-
-TRITONAPI_DECLSPEC TRITONSERVER_Error*
 TRITONSERVER_ServerOptionsSetLogInfo(
     TRITONSERVER_ServerOptions* options, bool log)
 {
@@ -1355,21 +1326,6 @@ TRITONSERVER_ServerOptionsSetGpuMetrics(
 }
 
 TRITONAPI_DECLSPEC TRITONSERVER_Error*
-TRITONSERVER_ServerOptionsSetCpuMetrics(
-    TRITONSERVER_ServerOptions* options, bool cpu_metrics)
-{
-#ifdef TRITON_ENABLE_METRICS
-  TritonServerOptions* loptions =
-      reinterpret_cast<TritonServerOptions*>(options);
-  loptions->SetCpuMetrics(cpu_metrics);
-  return nullptr;  // Success
-#else
-  return TRITONSERVER_ErrorNew(
-      TRITONSERVER_ERROR_UNSUPPORTED, "metrics not supported");
-#endif  // TRITON_ENABLE_METRICS
-}
-
-TRITONAPI_DECLSPEC TRITONSERVER_Error*
 TRITONSERVER_ServerOptionsSetMetricsInterval(
     TRITONSERVER_ServerOptions* options, uint64_t metrics_interval_ms)
 {
@@ -1402,43 +1358,6 @@ TRITONSERVER_ServerOptionsSetRepoAgentDirectory(
       reinterpret_cast<TritonServerOptions*>(options);
   loptions->SetRepoAgentDir(repoagent_dir);
   return nullptr;  // Success
-}
-
-TRITONAPI_DECLSPEC TRITONSERVER_Error*
-TRITONSERVER_ServerOptionsSetModelLoadDeviceLimit(
-    TRITONSERVER_ServerOptions* options,
-    const TRITONSERVER_InstanceGroupKind kind, const int device_id,
-    const double fraction)
-{
-  if (device_id < 0) {
-    return TRITONSERVER_ErrorNew(
-        TRITONSERVER_ERROR_INVALID_ARG,
-        (std::string("expects device ID >= 0, got ") +
-         std::to_string(device_id))
-            .c_str());
-  } else if ((fraction < 0.0) || (fraction > 1.0)) {
-    return TRITONSERVER_ErrorNew(
-        TRITONSERVER_ERROR_INVALID_ARG,
-        (std::string("expects limit fraction to be in range [0.0, 1.0], got ") +
-         std::to_string(fraction))
-            .c_str());
-  }
-
-  TritonServerOptions* loptions =
-      reinterpret_cast<TritonServerOptions*>(options);
-  switch (kind) {
-    case TRITONSERVER_INSTANCEGROUPKIND_GPU: {
-      static std::string key_prefix = "model-load-gpu-limit-device-";
-      return loptions->AddBackendConfig(
-          "", key_prefix + std::to_string(device_id), std::to_string(fraction));
-    }
-    default:
-      return TRITONSERVER_ErrorNew(
-          TRITONSERVER_ERROR_INVALID_ARG,
-          (std::string("given device kind is not supported, got: ") +
-           TRITONSERVER_InstanceGroupKindString(kind))
-              .c_str());
-  }
 }
 
 TRITONAPI_DECLSPEC TRITONSERVER_Error*
@@ -2134,6 +2053,7 @@ TRITONSERVER_ServerNew(
   // Initialize server
   tc::Status status = lserver->Init();
 
+
 #ifdef TRITON_ENABLE_METRICS
   if (loptions->Metrics() && lserver->ResponseCacheEnabled()) {
     // NOTE: Cache metrics must be enabled after cache initialized in
@@ -2146,16 +2066,8 @@ TRITONSERVER_ServerNew(
   }
 #endif  // TRITON_ENABLE_METRICS_GPU
 
-#ifdef TRITON_ENABLE_METRICS_CPU
-  if (loptions->Metrics() && loptions->CpuMetrics()) {
-    tc::Metrics::EnableCpuMetrics();
-  }
-#endif  // TRITON_ENABLE_METRICS_CPU
-
-  const bool poll_metrics =
-      (lserver->ResponseCacheEnabled() || loptions->GpuMetrics() ||
-       loptions->CpuMetrics());
-  if (loptions->Metrics() && poll_metrics) {
+  if (loptions->Metrics() &&
+      (lserver->ResponseCacheEnabled() || loptions->GpuMetrics())) {
     // Start thread to poll enabled metrics periodically
     tc::Metrics::StartPollingThreadSingleton(lserver->GetResponseCache());
   }
@@ -2948,15 +2860,7 @@ TRITONSERVER_Error*
 TRITONSERVER_MetricFamilyDelete(TRITONSERVER_MetricFamily* family)
 {
 #ifdef TRITON_ENABLE_METRICS
-  auto lfamily = reinterpret_cast<tc::MetricFamily*>(family);
-  if (lfamily->NumMetrics() > 0) {
-    return TRITONSERVER_ErrorNew(
-        TRITONSERVER_ERROR_INTERNAL,
-        "Must call MetricDelete on all dependent metrics before calling "
-        "MetricFamilyDelete.");
-  }
-
-  delete lfamily;
+  delete reinterpret_cast<tc::MetricFamily*>(family);
   return nullptr;  // Success
 #else
   return TRITONSERVER_ErrorNew(
@@ -2999,17 +2903,8 @@ TRITONSERVER_Error*
 TRITONSERVER_MetricDelete(TRITONSERVER_Metric* metric)
 {
 #ifdef TRITON_ENABLE_METRICS
-  auto lmetric = reinterpret_cast<tc::Metric*>(metric);
-  if (lmetric->Family() == nullptr) {
-    return TRITONSERVER_ErrorNew(
-        TRITONSERVER_ERROR_INTERNAL,
-        "MetricFamily reference was invalidated before Metric was deleted. "
-        "Must call MetricDelete on all dependent metrics before calling "
-        "MetricFamilyDelete.");
-  }
-
-  delete lmetric;
-  return nullptr;  // success
+  delete reinterpret_cast<tc::Metric*>(metric);
+  return nullptr;  // Success
 #else
   return TRITONSERVER_ErrorNew(
       TRITONSERVER_ERROR_UNSUPPORTED, "metrics not supported");

@@ -96,9 +96,7 @@ InferenceServer::InferenceServer()
 #ifdef TRITON_ENABLE_TRACING
   extensions_.push_back("trace");
 #endif  // TRITON_ENABLE_TRACING
-#ifdef TRITON_ENABLE_LOGGING
-  extensions_.push_back("logging");
-#endif  // TRITON_ENABLE_LOGGING
+
   strict_model_config_ = true;
   strict_readiness_ = true;
   exit_timeout_secs_ = 30;
@@ -223,13 +221,11 @@ InferenceServer::Init()
   bool polling_enabled = (model_control_mode_ == ModelControlMode::MODE_POLL);
   bool model_control_enabled =
       (model_control_mode_ == ModelControlMode::MODE_EXPLICIT);
-  const ModelLifeCycleOptions life_cycle_options(
-      min_supported_compute_capability_, backend_cmdline_config_map_,
-      host_policy_map_, model_load_thread_count_);
   status = ModelRepositoryManager::Create(
       this, version_, model_repository_paths_, startup_models_,
-      strict_model_config_, polling_enabled, model_control_enabled,
-      life_cycle_options, &model_repository_manager_);
+      strict_model_config_, backend_cmdline_config_map_, polling_enabled,
+      model_control_enabled, min_supported_compute_capability_,
+      host_policy_map_, model_load_thread_count_, &model_repository_manager_);
   if (!status.IsOk()) {
     if (model_repository_manager_ == nullptr) {
       ready_state_ = ServerReadyState::SERVER_FAILED_TO_INITIALIZE;
@@ -439,7 +435,7 @@ InferenceServer::ModelReadyVersions(
 
   ScopedAtomicIncrement inflight(inflight_request_counter_);
 
-  const auto version_states =
+  const ModelRepositoryManager::VersionStateMap version_states =
       model_repository_manager_->VersionStates(model_name);
   for (const auto& pr : version_states) {
     if (pr.second.first == ModelReadyState::READY) {
@@ -520,7 +516,7 @@ InferenceServer::LoadModel(
 
   ScopedAtomicIncrement inflight(inflight_request_counter_);
 
-  auto action_type = ActionType::LOAD;
+  auto action_type = ModelRepositoryManager::ActionType::LOAD;
   return model_repository_manager_->LoadUnloadModel(
       models, action_type, false /* unload_dependents */);
 }
@@ -535,7 +531,7 @@ InferenceServer::UnloadModel(
 
   ScopedAtomicIncrement inflight(inflight_request_counter_);
 
-  auto action_type = ActionType::UNLOAD;
+  auto action_type = ModelRepositoryManager::ActionType::UNLOAD;
   return model_repository_manager_->LoadUnloadModel(
       {{model_name, {}}}, action_type, unload_dependents);
 }

@@ -42,11 +42,6 @@ namespace triton { namespace core {
 //
 class TritonBackend {
  public:
-  struct Attribute {
-    Attribute() : exec_policy_(TRITONBACKEND_EXECUTION_BLOCKING) {}
-    TRITONBACKEND_ExecutionPolicy exec_policy_;
-    std::vector<inference::ModelInstanceGroup> preferred_groups_;
-  };
   typedef TRITONSERVER_Error* (*TritonModelInitFn_t)(
       TRITONBACKEND_Model* model);
   typedef TRITONSERVER_Error* (*TritonModelFiniFn_t)(
@@ -69,15 +64,11 @@ class TritonBackend {
   const std::string& Name() const { return name_; }
   const std::string& Directory() const { return dir_; }
   const TritonServerMessage& BackendConfig() const { return backend_config_; }
-  const Attribute& BackendAttributes() const { return attributes_; }
 
-  TRITONBACKEND_ExecutionPolicy ExecutionPolicy() const
-  {
-    return attributes_.exec_policy_;
-  }
+  TRITONBACKEND_ExecutionPolicy ExecutionPolicy() const { return exec_policy_; }
   void SetExecutionPolicy(const TRITONBACKEND_ExecutionPolicy policy)
   {
-    attributes_.exec_policy_ = policy;
+    exec_policy_ = policy;
   }
 
   void* State() { return state_; }
@@ -103,9 +94,6 @@ class TritonBackend {
       TRITONBACKEND_Backend* backend);
   typedef TRITONSERVER_Error* (*TritonBackendFiniFn_t)(
       TRITONBACKEND_Backend* backend);
-  typedef TRITONSERVER_Error* (*TritonBackendAttriFn_t)(
-      TRITONBACKEND_Backend* backend,
-      TRITONBACKEND_BackendAttribute* backend_attributes);
 
   TritonBackend(
       const std::string& name, const std::string& dir,
@@ -113,8 +101,6 @@ class TritonBackend {
 
   void ClearHandles();
   Status LoadBackendLibrary();
-
-  Status UpdateAttributes();
 
   // The name of the backend.
   const std::string name_;
@@ -129,19 +115,18 @@ class TritonBackend {
   // Backend configuration as JSON
   TritonServerMessage backend_config_;
 
-  // backend attributes
-  Attribute attributes_;
-
   // dlopen / dlsym handles
   void* dlhandle_;
   TritonBackendInitFn_t backend_init_fn_;
   TritonBackendFiniFn_t backend_fini_fn_;
-  TritonBackendAttriFn_t backend_attri_fn_;
   TritonModelInitFn_t model_init_fn_;
   TritonModelFiniFn_t model_fini_fn_;
   TritonModelInstanceInitFn_t inst_init_fn_;
   TritonModelInstanceFiniFn_t inst_fini_fn_;
   TritonModelInstanceExecFn_t inst_exec_fn_;
+
+  // Execution policy
+  TRITONBACKEND_ExecutionPolicy exec_policy_;
 
   // Opaque state associated with the backend.
   void* state_;

@@ -33,49 +33,49 @@
 namespace triton { namespace core {
 
 Status
-RequiredEqualInputs::Initialize(
+InitRequiredEqualInputs(
     const std::unique_ptr<InferenceRequest>& request,
     const std::unordered_map<std::string, bool>& enforce_equal_shape_tensors,
-    const bool has_optional_input)
+    const bool has_optional_input, RequiredEqualInputs* required_equal_inputs)
 {
-  has_optional_input_ = has_optional_input;
-  required_inputs_.clear();
+  required_equal_inputs->clear();
 
   for (const auto& pr : request->ImmutableInputs()) {
     const InferenceRequest::Input* input = pr.second;
     const auto itr = enforce_equal_shape_tensors.find(input->Name());
     if (itr != enforce_equal_shape_tensors.end()) {
-      required_inputs_.emplace(
+      required_equal_inputs->emplace(
           std::piecewise_construct, std::forward_as_tuple(input->Name()),
           std::forward_as_tuple(input, itr->second));
     }
-    // When the model has optional inputs, overload 'required_inputs_'
+    // When the model has optional inputs, overload 'required_equal_inputs'
     // to track the inputs involved in the batch
     else if (has_optional_input) {
-      required_inputs_.emplace(
+      required_equal_inputs->emplace(
           std::piecewise_construct, std::forward_as_tuple(input->Name()),
           std::forward_as_tuple(nullptr, false));
     }
   }
 
-  init_ = true;
   return Status::Success;
 }
 
 bool
-RequiredEqualInputs::HasEqualInputs(
-    const std::unique_ptr<InferenceRequest>& request)
+CompareWithRequiredEqualInputs(
+    const std::unique_ptr<InferenceRequest>& request,
+    const bool has_optional_input,
+    const RequiredEqualInputs& required_equal_inputs)
 {
   // If current request has different number of inputs, then dynamic batching
   // shouldn't be applied.
-  if (has_optional_input_ &&
-      (request->ImmutableInputs().size() != required_inputs_.size())) {
+  if (has_optional_input &&
+      (request->ImmutableInputs().size() != required_equal_inputs.size())) {
     return false;
   }
   for (const auto& pr : request->ImmutableInputs()) {
     const InferenceRequest::Input* input = pr.second;
-    const auto itr = required_inputs_.find(input->Name());
-    if (itr != required_inputs_.end()) {
+    const auto itr = required_equal_inputs.find(input->Name());
+    if (itr != required_equal_inputs.end()) {
       if (itr->second.first != nullptr) {
         // Make sure shape of input tensors is equal.
         if (!triton::common::CompareDims(
@@ -117,9 +117,9 @@ RequiredEqualInputs::HasEqualInputs(
           }
         }
       }
-    } else if (has_optional_input_) {
+    } else if (has_optional_input) {
       // If the model has optional inputs, the current request must contains all
-      // inputs that in the first request (tracked in 'required_inputs_').
+      // inputs that in the first request (tracked in 'required_equal_inputs').
       return false;
     }
   }

@@ -637,8 +637,7 @@ GetNormalizedModelConfig(
 {
   // Server-side autofill only sets certain backend fields for the models that
   // belong to limited backends for backwards-compatibility. See TensorRT
-  // backend, ONNX Runtime backend, OpenVINO backend, TensorFLow backend, and
-  // PyTorch backend.
+  // backend, ONNX Runtime backend, TensorFLow backend, and PyTorch backend.
   // Extracting detailed information is delegated to the backend implementation
   // to auto-complete.
   RETURN_IF_ERROR(
@@ -655,6 +654,25 @@ Status
 NormalizeModelConfig(
     const double min_compute_capability, inference::ModelConfig* config)
 {
+  if (config->backend().empty()) {
+    // Expect backend is not empty unless it is ensemble platform.
+#ifdef TRITON_ENABLE_ENSEMBLE
+    if (config->platform() != kEnsemblePlatform)
+#endif  // TRITON_ENABLE_ENSEMBLE
+      return Status(
+          Status::Code::INVALID_ARG, "unexpected platform type '" +
+                                         config->platform() + "' for " +
+                                         config->name());
+  }
+#ifdef TRITON_ENABLE_ENSEMBLE
+  else if (config->platform() == kEnsemblePlatform) {
+    return Status(
+        Status::Code::INVALID_ARG,
+        "Ensemble model '" + config->name() + "' must have platform type '" +
+            config->platform() + "' and empty backend type");
+  }
+#endif  // TRITON_ENABLE_ENSEMBLE
+
   // If version_policy is not specified, default to Latest 1 version.
   if (!config->has_version_policy()) {
     inference::ModelVersionPolicy::Latest latest;
@@ -709,135 +727,65 @@ NormalizeModelConfig(
     if (!optimization->has_output_pinned_memory()) {
       optimization->mutable_output_pinned_memory()->set_enable(true);
     }
-  }
 
-  return Status::Success;
-}
+    // Make sure there is at least one instance_group.
+    if (config->instance_group().size() == 0) {
+      inference::ModelInstanceGroup* group = config->add_instance_group();
+      group->set_name(config->name());
+    }
 
-Status
-NormalizeInstanceGroup(
-    const double min_compute_capability,
-    const std::vector<inference::ModelInstanceGroup>& preferred_groups,
-    inference::ModelConfig* config)
-{
-  // Instance group setting doesn't apply to ensemble
-  if (config->has_ensemble_scheduling()) {
-    return Status::Success;
-  }
-
-  // Creates a set of supported GPU device ids
-  std::set<int> supported_gpus;
+    // Creates a set of supported GPU device ids
+    std::set<int> supported_gpus;
 #ifdef TRITON_ENABLE_GPU
-  // Get the total number of GPUs from the runtime library.
-  Status status = GetSupportedGPUs(&supported_gpus, min_compute_capability);
-  if (!status.IsOk()) {
-    return status;
-  }
+    // Get the total number of GPUs from the runtime library.
+    Status status = GetSupportedGPUs(&supported_gpus, min_compute_capability);
+    if (!status.IsOk()) {
+      return status;
+    }
 
 #endif  // TRITON_ENABLE_GPU
 
-  // Make sure there is at least one instance_group.
-  if (config->instance_group().empty()) {
-    inference::ModelInstanceGroup* group = config->add_instance_group();
-    group->set_name(config->name());
+    // Assign default name, kind and count to each instance group that
+    // doesn't give those values explicitly. For KIND_GPU, set GPUs to
+    // all available if not specified explicitly.
+    size_t cnt = 0;
+    for (auto& group : *config->mutable_instance_group()) {
+      // Name
+      if (group.name().empty()) {
+        group.set_name(config->name() + "_" + std::to_string(cnt));
+      }
+      cnt++;
 
-    for (const auto& pg : preferred_groups) {
-      group->set_kind(pg.kind());
-      group->set_count(pg.count());
-      // handle preferred GPU setting differently based on kind
-      if (pg.kind() == inference::ModelInstanceGroup::KIND_GPU) {
-        // Don't use preferred group with KIND_GPU if there is no GPU.
+      // For KIND_AUTO... if there are no GPUs or if any of the listed
+      // 'gpu's are not present, then use KIND_CPU.
+      if (group.kind() == inference::ModelInstanceGroup::KIND_AUTO) {
         if (supported_gpus.empty()) {
-          continue;
-        }
-        // If preferred group sets GPUs, limit deployment onto those that
-        // are also listed in supported gpus
-        if (!pg.gpus().empty()) {
-          for (const int32_t gid : pg.gpus()) {
-            if (supported_gpus.find(gid) != supported_gpus.end()) {
-              group->add_gpus(gid);
+          group.set_kind(inference::ModelInstanceGroup::KIND_CPU);
+        } else {
+          for (const int32_t gid : group.gpus()) {
+            if (supported_gpus.find(gid) == supported_gpus.end()) {
+              group.set_kind(inference::ModelInstanceGroup::KIND_CPU);
+              break;
             }
           }
         }
-        break;
-      } else if (pg.kind() == inference::ModelInstanceGroup::KIND_AUTO) {
-        // if AUTO, then set preferred GPU as is, to align with KIND_AUTO
-        // deduction specified below
-        for (const int32_t gid : pg.gpus()) {
-          group->add_gpus(gid);
-        }
-        break;
-      }
-      // Other kind should not set GPUs
-      break;
-    }
-  }
 
-  // Assign default name, kind and count to each instance group that
-  // doesn't give those values explicitly. For KIND_GPU, set GPUs to
-  // all available if not specified explicitly.
-  size_t cnt = 0;
-  for (auto& group : *config->mutable_instance_group()) {
-    // Name
-    if (group.name().empty()) {
-      group.set_name(config->name() + "_" + std::to_string(cnt));
-    }
-    cnt++;
-
-    // For KIND_AUTO... if there are no GPUs or if any of the listed
-    // 'gpu's are not present, then use KIND_CPU.
-    if (group.kind() == inference::ModelInstanceGroup::KIND_AUTO) {
-      if (supported_gpus.empty()) {
-        group.set_kind(inference::ModelInstanceGroup::KIND_CPU);
-      } else {
-        for (const int32_t gid : group.gpus()) {
-          if (supported_gpus.find(gid) == supported_gpus.end()) {
-            group.set_kind(inference::ModelInstanceGroup::KIND_CPU);
-            break;
-          }
+        if (group.kind() == inference::ModelInstanceGroup::KIND_AUTO) {
+          group.set_kind(inference::ModelInstanceGroup::KIND_GPU);
         }
       }
 
-      if (group.kind() == inference::ModelInstanceGroup::KIND_AUTO) {
-        group.set_kind(inference::ModelInstanceGroup::KIND_GPU);
-      }
-    }
-
-    // KIND is resolved at this point
-    for (const auto& pg : preferred_groups) {
-      if (group.kind() != pg.kind()) {
-        continue;
+      // Count
+      if (group.count() < 1) {
+        RETURN_IF_ERROR(SetDefaultInstanceCount(&group, config->backend()));
       }
 
-      // Limit the GPU setting within what is specified in the preferred group,
-      // if no available GPU then skip to next preferred group
+      // GPUs
       if ((group.kind() == inference::ModelInstanceGroup::KIND_GPU) &&
-          group.gpus().empty() && !pg.gpus().empty()) {
-        for (const int32_t gid : pg.gpus()) {
-          if (supported_gpus.find(gid) != supported_gpus.end()) {
-            group.add_gpus(gid);
-          }
+          (group.gpus().size() == 0)) {
+        for (auto d : supported_gpus) {
+          group.add_gpus(d);
         }
-        if (group.gpus().empty()) {
-          continue;
-        }
-      }
-      if ((group.count() < 1) && (pg.count() > 0)) {
-        group.set_count(pg.count());
-      }
-    }
-
-    // Set Triton default if the fields are not set from preferred group
-    // Count
-    if (group.count() < 1) {
-      RETURN_IF_ERROR(SetDefaultInstanceCount(&group, config->backend()));
-    }
-
-    // GPUs
-    if ((group.kind() == inference::ModelInstanceGroup::KIND_GPU) &&
-        (group.gpus().size() == 0)) {
-      for (auto d : supported_gpus) {
-        group.add_gpus(d);
       }
     }
   }
@@ -998,26 +946,6 @@ AutoCompleteBackendFields(
     return Status::Success;
   }
 
-  // OpenVINO
-  if (config->backend().empty()) {
-    if (config->default_model_filename() == kOpenVINORuntimeOpenVINOFilename) {
-      config->set_backend(kOpenVINORuntimeBackend);
-    } else if (
-        config->platform().empty() &&
-        config->default_model_filename().empty() && has_version) {
-      if (version_dir_content.find(kOpenVINORuntimeOpenVINOFilename) !=
-          version_dir_content.end()) {
-        config->set_backend(kOpenVINORuntimeBackend);
-      }
-    }
-  }
-  if (config->backend() == kOpenVINORuntimeBackend) {
-    if (config->default_model_filename().empty()) {
-      config->set_default_model_filename(kOpenVINORuntimeOpenVINOFilename);
-    }
-    return Status::Success;
-  }
-
   // PyTorch (TorchScript, LibTorch)
   if (config->backend().empty()) {
     if ((config->platform() == kPyTorchLibTorchPlatform) ||
@@ -1064,34 +992,6 @@ AutoCompleteBackendFields(
     if (config->default_model_filename().empty()) {
       config->set_default_model_filename(kPythonFilename);
     }
-    return Status::Success;
-  }
-
-  // Custom Backend
-  // For now, only do the narrowest case, where no info is given in the config.
-  if (config->backend().empty() && config->platform().empty() &&
-      config->default_model_filename().empty()) {
-    LOG_VERBOSE(1) << "Could not infer supported backend, so attempting "
-                      "autofill of custom backend.";
-    // Since we lazily load the backends, we let the model tell us what backend
-    // to load. We must assume that if the model name conforms to the required
-    // shape, we parse the backend name out of the model file name. i.e.
-    // model.identity will set the backend to "identity".
-    const std::string delimiter = ".";
-    size_t pos = model_name.find(delimiter, 0);
-    if (pos == std::string::npos) {
-      return Status(
-          triton::common::Error::Code::INVALID_ARG,
-          ("Invalid model name: Could not determine backend for model '" +
-           model_name +
-           "' with no backend in model configuration. Expected model name of "
-           "the form 'model.<backend_name>'."));
-    }
-    const std::string backend_name =
-        model_name.substr(pos + 1, std::string::npos);
-    config->set_backend(backend_name);
-    config->set_default_model_filename(
-        (std::string("model.") + backend_name).c_str());
     return Status::Success;
   }
 
@@ -1226,25 +1126,6 @@ ValidateModelConfig(
     return Status(
         Status::Code::INVALID_ARG, "model configuration must specify 'name'");
   }
-
-  if (config.backend().empty()) {
-    // Expect backend is not empty unless it is ensemble platform.
-#ifdef TRITON_ENABLE_ENSEMBLE
-    if (config.platform() != kEnsemblePlatform)
-#endif  // TRITON_ENABLE_ENSEMBLE
-      return Status(
-          Status::Code::INVALID_ARG, "unexpected platform type '" +
-                                         config.platform() + "' for " +
-                                         config.name());
-  }
-#ifdef TRITON_ENABLE_ENSEMBLE
-  else if (config.platform() == kEnsemblePlatform) {
-    return Status(
-        Status::Code::INVALID_ARG,
-        "Ensemble model '" + config.name() + "' must have platform type '" +
-            config.platform() + "' and empty backend type");
-  }
-#endif  // TRITON_ENABLE_ENSEMBLE
 
   if (config.platform().empty() && config.backend().empty()) {
     return Status(
@@ -1446,15 +1327,124 @@ ValidateModelConfig(
     return Status(
         Status::Code::INVALID_ARG, "ensemble scheduling not supported");
 #endif  // TRITON_ENABLE_ENSEMBLE
-  }
+  } else {
 #ifdef TRITON_ENABLE_ENSEMBLE
-  else if (config.platform() == kEnsemblePlatform) {
-    return Status(
-        Status::Code::INVALID_ARG,
-        "ensemble scheduling must be set for ensemble " + config.name() +
-            " whose platform is " + kEnsemblePlatform);
-  }
+    if (config.platform() == kEnsemblePlatform) {
+      return Status(
+          Status::Code::INVALID_ARG,
+          "ensemble scheduling must be set for ensemble " + config.name() +
+              " whose platform is " + kEnsemblePlatform);
+    }
 #endif  // TRITON_ENABLE_ENSEMBLE
+
+    if (config.instance_group().size() == 0) {
+      return Status(
+          Status::Code::INVALID_ARG,
+          "must specify one or more 'instance group's for " + config.name());
+    }
+
+    // Make sure KIND_GPU instance group specifies at least one GPU and
+    // doesn't specify a non-existent GPU. Make sure non-KIND_GPU does
+    // not specify any GPUs.
+#ifdef TRITON_ENABLE_GPU
+    std::set<int> supported_gpus;
+    Status status = GetSupportedGPUs(&supported_gpus, min_compute_capability);
+    if (!status.IsOk()) {
+      return status;
+    }
+#endif  // TRITON_ENABLE_GPU
+
+    for (const auto& group : config.instance_group()) {
+      if (group.kind() == inference::ModelInstanceGroup::KIND_MODEL) {
+        if (group.gpus().size() > 0) {
+          return Status(
+              Status::Code::INVALID_ARG,
+              "instance group " + group.name() + " of model " + config.name() +
+                  " has kind KIND_MODEL but specifies one or more GPUs");
+        }
+      } else if (group.kind() == inference::ModelInstanceGroup::KIND_GPU) {
+#if !defined(TRITON_ENABLE_GPU) && !defined(TRITON_ENABLE_MALI_GPU)
+        return Status(
+            Status::Code::INVALID_ARG,
+            "instance group " + group.name() + " of model " + config.name() +
+                " has kind KIND_GPU but server does not support GPUs");
+#elif defined(TRITON_ENABLE_GPU)
+        if (group.gpus().size() == 0) {
+          if (supported_gpus.size() == 0) {
+            return Status(
+                Status::Code::INVALID_ARG,
+                "instance group " + group.name() + " of model " +
+                    config.name() +
+                    " has kind KIND_GPU but no GPUs are available");
+          } else {
+            return Status(
+                Status::Code::INVALID_ARG,
+                "instance group " + group.name() + " of model " +
+                    config.name() + " has kind KIND_GPU but specifies no GPUs");
+          }
+        }
+
+        for (const int32_t gid : group.gpus()) {
+          if (supported_gpus.find(gid) == supported_gpus.end()) {
+            std::string supported_gpus_str;
+            for (const auto& cc : supported_gpus) {
+              if (!supported_gpus_str.empty()) {
+                supported_gpus_str += ", ";
+              }
+              supported_gpus_str += std::to_string(cc);
+            }
+            return Status(
+                Status::Code::INVALID_ARG,
+                "instance group " + group.name() + " of model " +
+                    config.name() +
+                    " specifies invalid or unsupported gpu id " +
+                    std::to_string(gid) +
+                    ". GPUs with at least the minimum required CUDA compute "
+                    "compatibility of " +
+                    std::to_string(min_compute_capability) +
+                    " are: " + supported_gpus_str);
+          }
+        }
+#endif  // ! TRITON_ENABLE_GPU && ! TRITON_ENABLE_MALI_GPU
+      } else if (group.kind() == inference::ModelInstanceGroup::KIND_CPU) {
+        if (group.gpus().size() > 0) {
+          return Status(
+              Status::Code::INVALID_ARG,
+              "instance group " + group.name() + " of model " + config.name() +
+                  " has kind KIND_CPU but specifies one or more GPUs");
+        }
+      } else {
+        return Status(
+            Status::Code::INTERNAL, "instance group " + group.name() +
+                                        " of model " + config.name() +
+                                        " has unexpected kind KIND_AUTO");
+      }
+
+      if ((config.platform() != kTensorRTPlanPlatform) &&
+          !group.profile().empty()) {
+        return Status(
+            Status::Code::INVALID_ARG,
+            "instance group " + group.name() + " of model " + config.name() +
+                " and platform " + config.platform() +
+                "specifies profile field which is only supported for "
+                "TensorRT models");
+      } else if (!group.profile().empty()) {
+        for (const auto& profile : group.profile()) {
+          int profile_index;
+          RETURN_IF_ERROR(GetProfileIndex(profile, &profile_index));
+          if (profile_index < 0) {
+            return Status(
+                Status::Code::INVALID_ARG,
+                "instance group " + group.name() + " of model " +
+                    config.name() + " and platform " + config.platform() +
+                    " specifies invalid profile " + profile +
+                    ". The field should contain the string representation of a "
+                    "non-negative integer.");
+          }
+        }
+      }
+    }
+  }
 
   // FIXME: DLIS-3916 - Response Cache does not yet support decoupled models
   if (config.model_transaction_policy().decoupled() &&
@@ -1466,123 +1456,6 @@ ValidateModelConfig(
             " cache.");
   }
 
-  return Status::Success;
-}
-
-Status
-ValidateInstanceGroup(
-    const inference::ModelConfig& config, const double min_compute_capability)
-{
-  // Instance group setting doesn't apply to ensemble
-  if (config.has_ensemble_scheduling()) {
-    return Status::Success;
-  }
-
-  if (config.instance_group().size() == 0) {
-    return Status(
-        Status::Code::INVALID_ARG,
-        "must specify one or more 'instance group's for " + config.name());
-  }
-
-  // Make sure KIND_GPU instance group specifies at least one GPU and
-  // doesn't specify a non-existent GPU. Make sure non-KIND_GPU does
-  // not specify any GPUs.
-#ifdef TRITON_ENABLE_GPU
-  std::set<int> supported_gpus;
-  Status status = GetSupportedGPUs(&supported_gpus, min_compute_capability);
-  if (!status.IsOk()) {
-    return status;
-  }
-#endif  // TRITON_ENABLE_GPU
-
-  for (const auto& group : config.instance_group()) {
-    if (group.kind() == inference::ModelInstanceGroup::KIND_MODEL) {
-      if (group.gpus().size() > 0) {
-        return Status(
-            Status::Code::INVALID_ARG,
-            "instance group " + group.name() + " of model " + config.name() +
-                " has kind KIND_MODEL but specifies one or more GPUs");
-      }
-    } else if (group.kind() == inference::ModelInstanceGroup::KIND_GPU) {
-#if !defined(TRITON_ENABLE_GPU) && !defined(TRITON_ENABLE_MALI_GPU)
-      return Status(
-          Status::Code::INVALID_ARG,
-          "instance group " + group.name() + " of model " + config.name() +
-              " has kind KIND_GPU but server does not support GPUs");
-#elif defined(TRITON_ENABLE_GPU)
-      if (group.gpus().size() == 0) {
-        if (supported_gpus.size() == 0) {
-          return Status(
-              Status::Code::INVALID_ARG,
-              "instance group " + group.name() + " of model " + config.name() +
-                  " has kind KIND_GPU but no GPUs are available");
-        } else {
-          return Status(
-              Status::Code::INVALID_ARG,
-              "instance group " + group.name() + " of model " + config.name() +
-                  " has kind KIND_GPU but specifies no GPUs");
-        }
-      }
-
-      for (const int32_t gid : group.gpus()) {
-        if (supported_gpus.find(gid) == supported_gpus.end()) {
-          std::string supported_gpus_str;
-          for (const auto& cc : supported_gpus) {
-            if (!supported_gpus_str.empty()) {
-              supported_gpus_str += ", ";
-            }
-            supported_gpus_str += std::to_string(cc);
-          }
-          return Status(
-              Status::Code::INVALID_ARG,
-              "instance group " + group.name() + " of model " + config.name() +
-                  " specifies invalid or unsupported gpu id " +
-                  std::to_string(gid) +
-                  ". GPUs with at least the minimum required CUDA compute "
-                  "compatibility of " +
-                  std::to_string(min_compute_capability) +
-                  " are: " + supported_gpus_str);
-        }
-      }
-#endif  // ! TRITON_ENABLE_GPU && ! TRITON_ENABLE_MALI_GPU
-    } else if (group.kind() == inference::ModelInstanceGroup::KIND_CPU) {
-      if (group.gpus().size() > 0) {
-        return Status(
-            Status::Code::INVALID_ARG,
-            "instance group " + group.name() + " of model " + config.name() +
-                " has kind KIND_CPU but specifies one or more GPUs");
-      }
-    } else {
-      return Status(
-          Status::Code::INTERNAL, "instance group " + group.name() +
-                                      " of model " + config.name() +
-                                      " has unexpected kind KIND_AUTO");
-    }
-
-    if ((config.platform() != kTensorRTPlanPlatform) &&
-        !group.profile().empty()) {
-      return Status(
-          Status::Code::INVALID_ARG,
-          "instance group " + group.name() + " of model " + config.name() +
-              " and platform " + config.platform() +
-              "specifies profile field which is only supported for "
-              "TensorRT models");
-    } else if (!group.profile().empty()) {
-      for (const auto& profile : group.profile()) {
-        int profile_index;
-        RETURN_IF_ERROR(GetProfileIndex(profile, &profile_index));
-        if (profile_index < 0) {
-          return Status(
-              Status::Code::INVALID_ARG,
-              "instance group " + group.name() + " of model " + config.name() +
-                  " and platform " + config.platform() +
-                  " specifies invalid profile " + profile +
-                  ". The field should contain the string representation of a "
-                  "non-negative integer.");
-        }
-      }
-    }
-  }
   return Status::Success;
 }
 
@@ -1875,7 +1748,7 @@ FixIntArray(
           (std::string("unable to convert '") + str + "' to integer"));
     }
 
-    RETURN_IF_ERROR(fixed_shape_array.AppendInt(d));
+    fixed_shape_array.AppendInt(d);
   }
 
   shape_array.Swap(fixed_shape_array);
@@ -1919,7 +1792,7 @@ ModelConfigToJson(
 
   // Config will have 0 byte size if all fields are with default value,
   // in other word the config is empty.
-  if (config.ByteSizeLong() == 0) {
+  if (config.ByteSize() == 0) {
     json_str->clear();
     return Status::Success;
   }
@@ -2075,7 +1948,7 @@ ModelConfigToJson(
 
   // Convert fixed json back the string...
   triton::common::TritonJson::WriteBuffer buffer;
-  RETURN_IF_ERROR(config_json.Write(&buffer));
+  config_json.Write(&buffer);
   *json_str = std::move(buffer.MutableContents());
 
   return Status::Success;

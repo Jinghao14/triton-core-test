@@ -1,4 +1,4 @@
-// Copyright 2020-2022, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright (c) 2020, NVIDIA CORPORATION. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -60,7 +60,7 @@ class InferenceParameter {
   {
   }
 
-  // The name of the parameter.
+  // The name of the parametre.
   const std::string& Name() const { return name_; }
 
   // Data type of the parameter.

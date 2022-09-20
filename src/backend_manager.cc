@@ -92,34 +92,7 @@ TritonBackend::Create(
     RETURN_IF_TRITONSERVER_ERROR(err);
   }
 
-  local_backend->UpdateAttributes();
-
   *backend = std::move(local_backend);
-  return Status::Success;
-}
-
-Status
-TritonBackend::UpdateAttributes()
-{
-  if (backend_attri_fn_ == nullptr) {
-    return Status::Success;
-  }
-
-  // Create an Attribute object for the backend to fill, note that it copies
-  // some fields from 'attributes_' while the others use default value. This
-  // is an ad hoc way to determine whether the attribute is set by the backend
-  // and keep / update current value.
-  Attribute latest;
-  latest.exec_policy_ = attributes_.exec_policy_;
-  RETURN_IF_TRITONSERVER_ERROR(backend_attri_fn_(
-      reinterpret_cast<TRITONBACKEND_Backend*>(this),
-      reinterpret_cast<TRITONBACKEND_BackendAttribute*>(&latest)));
-
-  // Update attributes that were set
-  attributes_.exec_policy_ = latest.exec_policy_;
-  if (!latest.preferred_groups_.empty()) {
-    attributes_.preferred_groups_ = latest.preferred_groups_;
-  }
   return Status::Success;
 }
 
@@ -127,7 +100,8 @@ TritonBackend::TritonBackend(
     const std::string& name, const std::string& dir, const std::string& libpath,
     const TritonServerMessage& backend_config)
     : name_(name), dir_(dir), libpath_(libpath),
-      backend_config_(backend_config), state_(nullptr)
+      backend_config_(backend_config),
+      exec_policy_(TRITONBACKEND_EXECUTION_BLOCKING), state_(nullptr)
 {
   ClearHandles();
 }
@@ -153,7 +127,6 @@ TritonBackend::ClearHandles()
   dlhandle_ = nullptr;
   backend_init_fn_ = nullptr;
   backend_fini_fn_ = nullptr;
-  backend_attri_fn_ = nullptr;
   model_init_fn_ = nullptr;
   model_fini_fn_ = nullptr;
   inst_init_fn_ = nullptr;
@@ -166,7 +139,6 @@ TritonBackend::LoadBackendLibrary()
 {
   TritonBackendInitFn_t bifn;
   TritonBackendFiniFn_t bffn;
-  TritonBackendAttriFn_t bafn;
   TritonModelInitFn_t mifn;
   TritonModelFiniFn_t mffn;
   TritonModelInstanceInitFn_t iifn;
@@ -186,10 +158,6 @@ TritonBackend::LoadBackendLibrary()
     RETURN_IF_ERROR(slib->GetEntrypoint(
         dlhandle_, "TRITONBACKEND_Finalize", true /* optional */,
         reinterpret_cast<void**>(&bffn)));
-    // Backend attribute function, optional
-    RETURN_IF_ERROR(slib->GetEntrypoint(
-        dlhandle_, "TRITONBACKEND_GetBackendAttribute", true /* optional */,
-        reinterpret_cast<void**>(&bafn)));
 
     // Model initialize and finalize functions, optional
     RETURN_IF_ERROR(slib->GetEntrypoint(
@@ -215,7 +183,6 @@ TritonBackend::LoadBackendLibrary()
 
   backend_init_fn_ = bifn;
   backend_fini_fn_ = bffn;
-  backend_attri_fn_ = bafn;
   model_init_fn_ = mifn;
   model_fini_fn_ = mffn;
   inst_init_fn_ = iifn;

@@ -386,10 +386,6 @@ TRITONSERVER_ServerOptionsSetModelLoadThreadCount()
 {
 }
 TRITONAPI_DECLSPEC void
-TRITONSERVER_ServerOptionsSetLogFile()
-{
-}
-TRITONAPI_DECLSPEC void
 TRITONSERVER_ServerOptionsSetLogInfo()
 {
 }
@@ -418,10 +414,6 @@ TRITONSERVER_ServerOptionsSetGpuMetrics()
 {
 }
 TRITONAPI_DECLSPEC void
-TRITONSERVER_ServerOptionsSetCpuMetrics()
-{
-}
-TRITONAPI_DECLSPEC void
 TRITONSERVER_ServerOptionsSetMetricsInterval()
 {
 }
@@ -431,10 +423,6 @@ TRITONSERVER_ServerOptionsSetBackendDirectory()
 }
 TRITONAPI_DECLSPEC void
 TRITONSERVER_ServerOptionsSetRepoAgentDirectory()
-{
-}
-TRITONAPI_DECLSPEC void
-TRITONSERVER_ServerOptionsSetModelLoadDeviceLimit()
 {
 }
 TRITONAPI_DECLSPEC void
@@ -949,11 +937,6 @@ TRITONSERVER_MetricSet()
 
 TRITONAPI_DECLSPEC void
 TRITONSERVER_GetMetricKind()
-{
-}
-
-TRITONAPI_DECLSPEC void
-TRITONBACKEND_BackendAttributeAddPreferredInstanceGroup()
 {
 }
 

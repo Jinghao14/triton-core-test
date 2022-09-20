@@ -323,6 +323,7 @@ DynamicBatchScheduler::BatcherThread(const int nice)
         if (payload_saturated_ || IsStaleState(payload_state)) {
           NewPayload();
           next_preferred_batch_size_ = 0;
+          required_equal_inputs_.clear();
         }
       }
 
@@ -457,10 +458,9 @@ DynamicBatchScheduler::GetDynamicBatch()
     if ((payload_batch_size + queue_.PendingBatchCount()) == 0) {
       // Get the shape of the new batch that is being started...
       if (check_input) {
-        if (!curr_payload_->MutableRequiredEqualInputs()
-                 ->Initialize(
-                     queue_.RequestAtCursor(), enforce_equal_shape_tensors_,
-                     has_optional_input_)
+        if (!InitRequiredEqualInputs(
+                 queue_.RequestAtCursor(), enforce_equal_shape_tensors_,
+                 has_optional_input_, &required_equal_inputs_)
                  .IsOk()) {
           send_now = true;
           break;
@@ -486,9 +486,9 @@ DynamicBatchScheduler::GetDynamicBatch()
 
       // There is a pending batch and it has a different shape then
       // this request, so send the pending batch as it is.
-      if (check_input &&
-          !curr_payload_->MutableRequiredEqualInputs()->HasEqualInputs(
-              queue_.RequestAtCursor())) {
+      if (check_input && !CompareWithRequiredEqualInputs(
+                             queue_.RequestAtCursor(), has_optional_input_,
+                             required_equal_inputs_)) {
         curr_payload_->MarkSaturated();
         send_now = true;
         break;

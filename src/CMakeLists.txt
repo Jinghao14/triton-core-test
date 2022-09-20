@@ -84,8 +84,8 @@ endif() # TRITON_ENABLE_METRICS
 # GCS
 #
 if(${TRITON_ENABLE_GCS})
-  find_package(google_cloud_cpp_storage REQUIRED)
-  message(STATUS "Using google-cloud-cpp ${google_cloud_cpp_storage_VERSION}")
+  find_package(storage_client REQUIRED)
+  message(STATUS "Using google-cloud-cpp ${storage_client_VERSION}")
 endif() # TRITON_ENABLE_GCS
 
 #
@@ -124,7 +124,6 @@ set(
   metric_family.cc
   model.cc
   model_config_utils.cc
-  model_lifecycle.cc
   model_repository_manager.cc
   numa_utils.cc
   payload.cc
@@ -168,7 +167,6 @@ set(
   metric_family.h
   model_config_utils.h
   model.h
-  model_lifecycle.h
   model_repository_manager.h
   numa_utils.h
   payload.h
@@ -286,7 +284,7 @@ endif() # TRITON_ENABLE_METRICS
 if(${TRITON_ENABLE_GCS})
   target_include_directories(
     triton-core
-    PRIVATE $<TARGET_PROPERTY:google-cloud-cpp::storage,INTERFACE_INCLUDE_DIRECTORIES>
+    PRIVATE $<TARGET_PROPERTY:storage_client,INTERFACE_INCLUDE_DIRECTORIES>
   )
   if (NOT WIN32)
     set_source_files_properties(
@@ -382,13 +380,6 @@ if(${TRITON_ENABLE_METRICS_GPU})
   )
 endif() # TRITON_ENABLE_METRICS_GPU
 
-if(${TRITON_ENABLE_METRICS_CPU})
-  target_compile_definitions(
-    triton-core
-    PRIVATE TRITON_ENABLE_METRICS_CPU=1
-  )
-endif() # TRITON_ENABLE_METRICS_CPU
-
 if(${TRITON_ENABLE_GCS})
   target_compile_definitions(
     triton-core
@@ -461,7 +452,7 @@ if(${TRITON_ENABLE_GCS})
   target_link_libraries(
     triton-core
     PRIVATE
-      google-cloud-cpp::storage
+      storage_client
   )
 endif() # TRITON_ENABLE_GCS
 

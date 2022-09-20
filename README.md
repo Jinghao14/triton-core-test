@@ -102,4 +102,3 @@ support use the following command.
 ```
 $ cmake -DTRITON_CORE_HEADERS_ONLY=OFF -DTRITON_ENABLE_S3=ON -DTRITON_ENABLE_ENSEMBLE=ON ..
 ```
-# triton-core-test

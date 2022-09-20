@@ -91,7 +91,7 @@ struct TRITONSERVER_MetricFamily;
 ///   }
 ///
 #define TRITONSERVER_API_VERSION_MAJOR 1
-#define TRITONSERVER_API_VERSION_MINOR 17
+#define TRITONSERVER_API_VERSION_MINOR 15
 
 /// Get the TRITONBACKEND API version supported by the Triton shared
 /// library. This value can be compared against the
@@ -185,7 +185,7 @@ typedef enum TRITONSERVER_parametertype_enum {
   TRITONSERVER_PARAMETER_BYTES
 } TRITONSERVER_ParameterType;
 
-/// Get the string representation of a parameter type. The returned
+/// Get the string representation of a parmeter type. The returned
 /// string is not owned by the caller and so should not be modified or
 /// freed.
 ///
@@ -1761,16 +1761,6 @@ TRITONSERVER_DECLSPEC TRITONSERVER_Error*
 TRITONSERVER_ServerOptionsSetModelLoadThreadCount(
     TRITONSERVER_ServerOptions* options, unsigned int thread_count);
 
-/// Provide a log output file.
-///
-/// \param options The server options object.
-/// \param file a string defining the file where the log outputs will be saved.
-/// An empty string for the file name will cause triton to direct logging
-/// facilities to the console
-/// \return a TRITONSERVER_Error indicating success or failure.
-TRITONSERVER_DECLSPEC TRITONSERVER_Error* TRITONSERVER_ServerOptionsSetLogFile(
-    TRITONSERVER_ServerOptions* options, const char* file);
-
 /// Enable or disable info level logging.
 ///
 /// \param options The server options object.
@@ -1832,17 +1822,6 @@ TRITONSERVER_DECLSPEC TRITONSERVER_Error*
 TRITONSERVER_ServerOptionsSetGpuMetrics(
     TRITONSERVER_ServerOptions* options, bool gpu_metrics);
 
-/// Enable or disable CPU metrics collection in a server options. CPU
-/// metrics are collected if both this option and
-/// TRITONSERVER_ServerOptionsSetMetrics are true.
-///
-/// \param options The server options object.
-/// \param cpu_metrics True to enable CPU metrics, false to disable.
-/// \return a TRITONSERVER_Error indicating success or failure.
-TRITONSERVER_DECLSPEC TRITONSERVER_Error*
-TRITONSERVER_ServerOptionsSetCpuMetrics(
-    TRITONSERVER_ServerOptions* options, bool cpu_metrics);
-
 /// Set the interval for metrics collection in a server options.
 /// This is 2000 milliseconds by default.
 ///
@@ -1878,24 +1857,6 @@ TRITONSERVER_ServerOptionsSetBackendDirectory(
 TRITONSERVER_DECLSPEC TRITONSERVER_Error*
 TRITONSERVER_ServerOptionsSetRepoAgentDirectory(
     TRITONSERVER_ServerOptions* options, const char* repoagent_dir);
-
-/// Specify the limit on memory usage as a fraction on the device identified by
-/// 'kind' and 'device_id'. If model loading on the device is requested and the
-/// current memory usage exceeds the limit, the load will be rejected. If not
-/// specified, the limit will not be set.
-///
-/// Currently support TRITONSERVER_INSTANCEGROUPKIND_GPU
-///
-/// \param options The server options object.
-/// \param kind The kind of the device.
-/// \param device_id The id of the device.
-/// \param fraction The limit on memory usage as a fraction
-/// \return a TRITONSERVER_Error indicating success or failure.
-TRITONSERVER_DECLSPEC TRITONSERVER_Error*
-TRITONSERVER_ServerOptionsSetModelLoadDeviceLimit(
-    TRITONSERVER_ServerOptions* options,
-    const TRITONSERVER_InstanceGroupKind kind, const int device_id,
-    const double fraction);
 
 /// Set a configuration setting for a named backend in a server
 /// options.
@@ -2278,9 +2239,6 @@ TRITONSERVER_DECLSPEC TRITONSERVER_Error* TRITONSERVER_MetricFamilyNew(
     const char* name, const char* description);
 
 /// Delete a metric family object.
-/// A TRITONSERVER_MetricFamily* object should be deleted AFTER its
-/// corresponding TRITONSERVER_Metric* objects have been deleted.
-/// Attempting to delete a family before its metrics will return an error.
 ///
 /// \param family The metric family object to delete.
 /// \return a TRITONSERVER_Error indicating success or failure.
@@ -2289,10 +2247,7 @@ TRITONSERVER_DECLSPEC TRITONSERVER_Error* TRITONSERVER_MetricFamilyDelete(
 
 /// Create a new metric object. The caller takes ownership of the
 /// TRITONSERVER_Metric object and must call
-/// TRITONSERVER_MetricDelete to release the object. The caller is also
-/// responsible for ownership of the labels passed in. Each label can be deleted
-/// immediately after creating the metric with TRITONSERVER_ParameterDelete
-/// if not re-using the labels.
+/// TRITONSERVER_MetricDelete to release the object.
 ///
 /// \param metric Returns the new metric object.
 /// \param family The metric family to add this new metric to.
@@ -2304,9 +2259,6 @@ TRITONSERVER_DECLSPEC TRITONSERVER_Error* TRITONSERVER_MetricNew(
     const TRITONSERVER_Parameter** labels, const uint64_t label_count);
 
 /// Delete a metric object.
-/// All TRITONSERVER_Metric* objects should be deleted BEFORE their
-/// corresponding TRITONSERVER_MetricFamily* objects have been deleted.
-/// If a family is deleted before its metrics, an error will be returned.
 ///
 /// \param metric The metric object to delete.
 /// \return a TRITONSERVER_Error indicating success or failure.
